@@ -158,8 +158,11 @@ const sceneParams = {
   insideSwarmDuration: 5,
   fadeOutDuration: 3,
   startDelay: .5,
-  oscGain: .01,
+  oscGain: .5,
+  freqModulationFactor: 50,
 }
+
+const defaultSceneParams = JSON.parse(JSON.stringify(sceneParams));
 
 const startOscs = (oscs, startTime=0) => {
 
@@ -184,10 +187,10 @@ const startOscs = (oscs, startTime=0) => {
       for (let i=0;i<steps;i++) {
           let stepTime = (i/steps)*duration;
 
-          let newFreq = o.params.baseFreq + Math.sin(stepTime*Math.PI*2*.2 + oscPct*Math.PI)*50;
+          let newFreq = o.params.baseFreq + Math.sin(stepTime*Math.PI*2*.2 + oscPct*Math.PI)*sceneParams.freqModulationFactor;
           o.state.currentFreq = newFreq;
 
-          let oscPos = doOscUpdates(o,oscPct, stepTime,stepDelta, sceneParams);
+          doOscUpdates(o,oscPct, stepTime,stepDelta, sceneParams);
       
 
       }
@@ -201,9 +204,11 @@ const startOscs = (oscs, startTime=0) => {
 
           const finalPosition = {x: 0, y: 0, z: 5};
 
-          const newPosX = lastPosition.x + stepPct*(finalPosition.x - lastPosition.x);
-          const newPosY = lastPosition.y + stepPct*(finalPosition.y - lastPosition.y);
-          const newPosZ = lastPosition.z + stepPct*(finalPosition.z - lastPosition.z);
+          const interpolatePct = Math.pow(stepPct, .6);
+
+          const newPosX = lastPosition.x + interpolatePct*(finalPosition.x - lastPosition.x);
+          const newPosY = lastPosition.y + interpolatePct*(finalPosition.y - lastPosition.y);
+          const newPosZ = lastPosition.z + interpolatePct*(finalPosition.z - lastPosition.z);
 
           o.state.positions.push({x: newPosX, y: newPosY, z: newPosZ});
 
@@ -359,7 +364,7 @@ const setupScene = () => {
   lfo.connect(lfoGain.gain);
 
   oscGain = new GainNode(audioCtx);
-  oscGain.gain.value = sceneParams.oscGain;
+  oscGain.gain.value = sceneParams.oscGain*(1/sceneParams.numOscs);
 
   mainGain = new GainNode(audioCtx);
   mainGain.gain.value = 0;
@@ -370,6 +375,7 @@ const setupScene = () => {
   for (let i=0;i<numOscs;i++) {
       const thisOscParams = {};
       let freqFactor = .05*Math.floor((i+1)/2)*(-1 + 2*(i%2));
+      thisOscParams.freqFactor = freqFactor;
       thisOscParams.baseFreq = sceneParams.freq*Math.pow(1.059,freqFactor) + Math.random();
       const thisOscState = {lastPosition: {x: 0, y: 0,z: 0}, currentFreq: thisOscParams.baseFreq,
       lastDistance: 0, positions: [], rotations: []};
@@ -390,6 +396,7 @@ const setupScene = () => {
         oscs[i].osc = thisOsc;
         oscs[i].panner = panner;
         oscs[i].state = thisOscState;
+        oscs[i].params = thisOscParams;
       }
       else {
         const bugMesh = makeBugMesh(bugParams,i);
@@ -431,8 +438,19 @@ resetScene();
 
 const gui = new GUI();
 
-const resetObj = { Reset:function(){ resetScene(); }};
-gui.add(resetObj,'Reset');
-gui.add(scene.camera,'fov',1,120,1).onChange(()=> {
+const resetObj = { Restart:function(){ resetScene(); }};
+gui.add(resetObj,'Restart');
+const runTimeFolder = gui.addFolder('Runtime params');
+runTimeFolder.add(scene.camera,'fov',1,120,1).onChange(()=> {
   scene.camera.updateProjectionMatrix();
-})
+});
+const resetFolder = gui.addFolder('Reset params');
+resetFolder.add(sceneParams,'speedOfSoundFactor',0,1.01).name('Speed of sound factor');
+resetFolder.add(sceneParams,'freq',100,500,1).name('Buzz frequency');
+runTimeFolder.add(sceneParams, 'oscGain',0,5,.25).name('Osc volume').onChange(()=> {
+  oscGain.gain.value = sceneParams.oscGain*(1/sceneParams.numOscs);
+});
+
+resetFolder.add(sceneParams, 'baseSpeed',0,1,.01).name('Speed');
+
+
