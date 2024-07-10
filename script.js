@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { GUI } from 'three/addons/libs/lil-gui.module.min.js';
 import { setupThreeScene, onTick } from './lib/screen-tools.js';
-import { calcDopplerFactor, clampFrequency } from './lib/sound-tools.js';
+import { calcDopplerFactor, clampFrequency, audioBufferToMp3 } from './lib/sound-tools.js';
+import {createVideo} from './lib/ffmpeg.js';
 
 const scene = setupThreeScene();
 
@@ -19,12 +20,14 @@ const animate = async(args) => {
       if (sceneElapsedTime>0) {
           updateBugMeshs(sceneElapsedTime);
       }
+
+      scene.render();
   
   }
 
 
   
-  scene.render();
+  
 }
 
 scene.render();
@@ -158,13 +161,13 @@ const sceneParams = {
   insideSwarmDuration: 5,
   fadeOutDuration: 3,
   startDelay: .5,
-  oscGain: .5,
+  oscGain: .35,
   freqModulationFactor: 50,
 }
 
 const defaultSceneParams = JSON.parse(JSON.stringify(sceneParams));
 
-const startOscs = (oscs, startTime=0) => {
+const startOscs = (oscs, audioCtx, startTime=0) => {
 
   oscs.forEach((o)=> {
       o.osc
@@ -351,7 +354,7 @@ let oscGain, lfoGain, mainGain, lfo
 let oscs =[];
 
 
-const setupScene = () => {
+const setupScene = (audioCtx, audioOnly) => {
 
   lfo = new OscillatorNode(audioCtx,{
     frequency: sceneParams.lfoFreq,
@@ -398,6 +401,9 @@ const setupScene = () => {
         oscs[i].state = thisOscState;
         oscs[i].params = thisOscParams;
       }
+      else if (audioOnly) {
+        oscs.push({osc: thisOsc, params: thisOscParams, panner: panner, state: thisOscState});
+      }
       else {
         const bugMesh = makeBugMesh(bugParams,i);
   
@@ -410,13 +416,22 @@ const setupScene = () => {
   }
 }
 
-const startScene = ()=> {
+const startScene = (audioCtx, audioOnly)=> {
   const startTime = audioCtx.currentTime + sceneParams.startDelay;
   sceneState.startTime = startTime;
-  startOscs(oscs, startTime);
+  startOscs(oscs,audioCtx, startTime);
   lfo.start(startTime);
 
-  sceneReady = true;  
+  if (!audioOnly) {
+    sceneReady = true;  
+  }
+  
+}
+
+const restartScene = (audioCtx, audioOnly=false) => {
+  resetScene();
+  setupScene(audioCtx, audioOnly)
+  startScene(audioCtx, audioOnly);  
 }
 
 const resetScene = () => {
@@ -428,17 +443,16 @@ const resetScene = () => {
     sceneState.meshesVisible = false;
     sceneState.fadedOut = false;
   }
-  setupScene()
-  startScene();  
+  sceneReady = false;  
 }
 
 
-resetScene();
+restartScene(audioCtx);
 
 
 const gui = new GUI();
 
-const resetObj = { Restart:function(){ resetScene(); }};
+const resetObj = { Restart:function(){ restartScene(audioCtx); }};
 gui.add(resetObj,'Restart');
 const runTimeFolder = gui.addFolder('Runtime params');
 runTimeFolder.add(scene.camera,'fov',1,120,1).onChange(()=> {
@@ -452,5 +466,112 @@ runTimeFolder.add(sceneParams, 'oscGain',0,5,.25).name('Osc volume').onChange(()
 });
 
 resetFolder.add(sceneParams, 'baseSpeed',0,1,.01).name('Speed');
+
+const renderSceneAudio = () => {
+  return new Promise((resolve,reject)=> {
+    const totalDuration = sceneParams.duration + sceneParams.swarmViewerDuration + sceneParams.insideSwarmDuration + sceneParams.fadeOutDuration;
+    const offlineAudioCtx = new OfflineAudioContext(2,totalDuration*41000,41000);
+    resetScene(offlineAudioCtx,true);
+    const audioData = offlineAudioCtx.startRendering().then(async(audioBuffer)=> {
+      console.log(audioBuffer);
+      const mp3Blob = audioBufferToMp3(audioBuffer);
+      const arrayBuffer = await mp3Blob.arrayBuffer();
+      
+      const audioData = new Uint8Array(arrayBuffer, 0, arrayBuffer.byteLength);
+      const downloadURL = URL.createObjectURL(mp3Blob);
+      resolve({mp3Blob: mp3Blob, audioBuffer: audioBuffer, downloadURL: downloadURL, audioData: audioData});
+    });
+  })
+
+
+}
+
+// sceneParams.startDelay = 0;
+// const audioResult = await renderSceneAudio();
+// console.log(audioResult);
+
+const renderSettings = {
+  skipFirstFrame: false,
+}
+
+const renderSceneVisual = async() => {
+    // setup scene, and get oscillator positions 
+    resetScene();
+    setupScene(audioCtx, false)
+    startScene(audioCtx, true);  
+
+    let frameRate = 29.97;
+    const totalDuration = sceneParams.duration + sceneParams.swarmViewerDuration + sceneParams.insideSwarmDuration + sceneParams.fadeOutDuration;
+
+    const totalFrames = frameRate*totalDuration;
+    const frames = [];
+    const videoFrames = [];
+    let currentFrame = 0;
+    for (let i=0;i<totalFrames;i++) {
+        const currentTime = (i/frameRate);
+        updateBugMeshs(currentTime);
+
+        scene.render();
+
+        // capture canvas and add it to frames
+
+        const imgString = scene.canvas.toDataURL('image/jpeg',1);
+        const data = convertDataURIToBinary( imgString );
+
+        currentFrame += 1;
+
+        if (!renderSettings.skipFirstFrame || currentFrame>1) {
+                // @ts-ignore
+            videoFrames.push({
+                name: `img${ pad( videoFrames.length, 3 ) }.jpeg`,
+                data
+            });
+        }
+
+    }
+
+    console.log(videoFrames);
+    console.log(frames);
+
+    const videoBlob = await createVideo(videoFrames, {
+      audio: false,
+      width: scene.canvas.width,
+      height: scene.canvas.height,
+    });
+
+    const downloadURL = URL.createObjectURL(videoBlob);
+
+    console.log(downloadURL);
+
+    // let downloadBtn = document.getElementById('itemDownload');
+    // downloadBtn.style.zIndex = 1;
+    // downloadBtn.href = downloadURL;
+
+
+
+}
+
+function convertDataURIToBinary(dataURI) {
+  var base64 = dataURI.replace(/^data[^,]+,/,'');
+  var raw = window.atob(base64);
+  var rawLength = raw.length;
+
+  var array = new Uint8Array(new ArrayBuffer(rawLength));
+  for (let i = 0; i < rawLength; i++) {
+      array[i] = raw.charCodeAt(i);
+  }
+  return array;
+};
+
+function pad(n, width, z) {
+  z = z || '0';
+  n = n + '';
+  return n.length >= width ? n : new Array(width - n.length + 1).join(z) + n;
+}
+ 
+
+
+// const renderVideoObj = { Render:function(){ renderSceneVisual(); }};
+// gui.add(renderVideoObj,'Render');
 
 
