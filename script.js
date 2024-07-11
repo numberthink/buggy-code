@@ -161,7 +161,7 @@ const sceneParams = {
   insideSwarmDuration: 5,
   fadeOutDuration: 3,
   startDelay: .5,
-  oscGain: .35,
+  oscGain: 2.5,
   freqModulationFactor: 50,
 }
 
@@ -200,6 +200,7 @@ const startOscs = (oscs, audioCtx, startTime=0) => {
 
       const swarmDuration = sceneParams.swarmViewerDuration;
       const swarmSteps = swarmDuration*stepsPerSecond;
+      const deltaTime = 1/stepsPerSecond;
       for (let i=0;i<swarmSteps;i++) {
           let stepPct = (i/swarmSteps)
           let stepTime = (i/swarmSteps)*swarmDuration;
@@ -214,6 +215,18 @@ const startOscs = (oscs, audioCtx, startTime=0) => {
           const newPosZ = lastPosition.z + interpolatePct*(finalPosition.z - lastPosition.z);
 
           o.state.positions.push({x: newPosX, y: newPosY, z: newPosZ});
+
+          const observerPos = new THREE.Vector3(0,0,5);
+          const currentPos = new THREE.Vector3(newPosX, newPosY, newPosZ);
+          const distance = observerPos.distanceTo( currentPos );
+          const zSpeed = (distance - o.state.lastDistance)/deltaTime;
+          const dopplerFactor = calcDopplerFactor(zSpeed, 353*sceneParams.speedOfSoundFactor*(1-stepPct*0));
+        
+          const adjustedFreq = o.state.currentFreq*dopplerFactor*(1-stepPct*0) + 500*Math.pow(stepPct,3);
+          o.osc.frequency.setValueAtTime(clampFrequency(adjustedFreq),stepTime + sceneParams.duration + sceneState.startTime);
+
+          //o.state.lastPosition = {x: newPosX, y: newPosY, z: newPosZ};
+          o.state.lastDistance = distance;
 
           const thisPanner = o.panner;
           
@@ -254,6 +267,22 @@ const fadeInOutMainGain = (startTime) => {
           mainGain.gain.setValueAtTime(0, setTime);
       }
   }
+
+  const oscSteps = stepsPerSecond*sceneParams.swarmViewerDuration;
+  if (sceneParams.oscGain>1) {
+    const finalGainPct = .4;
+    // need to fade it to 1 by the time all the oscillators are on top of viewer
+    for (let i=0;i<oscSteps;i++) {
+      const t = i/oscSteps;
+      const stepTime = t*sceneParams.swarmViewerDuration;
+      const setTime = sceneParams.duration + stepTime+sceneState.startTime;
+      const gainVal = (sceneParams.oscGain + (1 - sceneParams.oscGain)*Math.pow(t,.3))*(1/sceneParams.numOscs)*(1-(1-finalGainPct)*t);
+      oscGain.gain.setValueAtTime(gainVal, setTime);
+      if (i==oscSteps-1) {
+          oscGain.gain.setValueAtTime((1/sceneParams.numOscs)*finalGainPct, setTime);
+      }
+    } 
+  }
 }
 
 const doOscUpdates = (thisOsc,oscPct,elapsedTime,deltaTime,params) => {
@@ -284,7 +313,7 @@ const doOscUpdates = (thisOsc,oscPct,elapsedTime,deltaTime,params) => {
   const adjustedFreq = thisOsc.state.currentFreq*dopplerFactor;
 
   
-  thisOsc.osc.frequency.setValueAtTime(clampFrequency(adjustedFreq),elapsedTime + + sceneState.startTime);
+  thisOsc.osc.frequency.setValueAtTime(clampFrequency(adjustedFreq),elapsedTime + sceneState.startTime);
 
   thisOsc.state.lastPosition = {x: oscX, y: oscY, z: oscZ};
   thisOsc.state.lastDistance = distance;
@@ -455,7 +484,7 @@ const gui = new GUI();
 const resetObj = { Restart:function(){ restartScene(audioCtx); }};
 gui.add(resetObj,'Restart');
 const runTimeFolder = gui.addFolder('Runtime params');
-runTimeFolder.add(scene.camera,'fov',1,120,1).onChange(()=> {
+runTimeFolder.add(scene.camera,'fov',1,120,1).name('FOV').onChange(()=> {
   scene.camera.updateProjectionMatrix();
 });
 const resetFolder = gui.addFolder('Reset params');
@@ -469,9 +498,10 @@ resetFolder.add(sceneParams, 'baseSpeed',0,1,.01).name('Speed');
 
 const renderSceneAudio = () => {
   return new Promise((resolve,reject)=> {
+    sceneParams.startDelay = 0;
     const totalDuration = sceneParams.duration + sceneParams.swarmViewerDuration + sceneParams.insideSwarmDuration + sceneParams.fadeOutDuration;
     const offlineAudioCtx = new OfflineAudioContext(2,totalDuration*41000,41000);
-    resetScene(offlineAudioCtx,true);
+    restartScene(offlineAudioCtx,true);
     const audioData = offlineAudioCtx.startRendering().then(async(audioBuffer)=> {
       console.log(audioBuffer);
       const mp3Blob = audioBufferToMp3(audioBuffer);
@@ -479,6 +509,11 @@ const renderSceneAudio = () => {
       
       const audioData = new Uint8Array(arrayBuffer, 0, arrayBuffer.byteLength);
       const downloadURL = URL.createObjectURL(mp3Blob);
+      console.log('Audio download url: ');
+      console.log(downloadURL);
+      // let downloadBtn = document.getElementById('itemDownload');
+      // downloadBtn.style.zIndex = 1;
+      // downloadBtn.href = downloadURL;
       resolve({mp3Blob: mp3Blob, audioBuffer: audioBuffer, downloadURL: downloadURL, audioData: audioData});
     });
   })
@@ -486,12 +521,12 @@ const renderSceneAudio = () => {
 
 }
 
-// sceneParams.startDelay = 0;
-// const audioResult = await renderSceneAudio();
-// console.log(audioResult);
+// const renderAudioObj = { Render:function(){ renderSceneAudio(); }};
+// gui.add(renderAudioObj,'Render').name('Render audio');
 
 const renderSettings = {
   skipFirstFrame: false,
+  includeAudio: true,
 }
 
 const renderSceneVisual = async() => {
@@ -530,11 +565,18 @@ const renderSceneVisual = async() => {
 
     }
 
-    console.log(videoFrames);
-    console.log(frames);
+    
+    if (renderSettings.includeAudio) {
+      const audioResult = await renderSceneAudio();
+      const data = audioResult.audioData;
+      videoFrames.push({
+        name: `audio.mp3`,
+        data
+      });
+    }
 
     const videoBlob = await createVideo(videoFrames, {
-      audio: false,
+      audio: renderSettings.includeAudio,
       width: scene.canvas.width,
       height: scene.canvas.height,
     });
@@ -543,9 +585,9 @@ const renderSceneVisual = async() => {
 
     console.log(downloadURL);
 
-    // let downloadBtn = document.getElementById('itemDownload');
-    // downloadBtn.style.zIndex = 1;
-    // downloadBtn.href = downloadURL;
+    let downloadBtn = document.getElementById('itemDownload');
+    downloadBtn.style.zIndex = 1;
+    downloadBtn.href = downloadURL;
 
 
 
@@ -572,6 +614,6 @@ function pad(n, width, z) {
 
 
 // const renderVideoObj = { Render:function(){ renderSceneVisual(); }};
-// gui.add(renderVideoObj,'Render');
+// gui.add(renderVideoObj,'Render').name('Render video');
 
 
