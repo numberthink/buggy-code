@@ -530,6 +530,7 @@ const renderSettings = {
 }
 
 const renderSceneVisual = async() => {
+    console.log('rendering video');
     // setup scene, and get oscillator positions 
     resetScene();
     setupScene(audioCtx, false)
@@ -539,7 +540,6 @@ const renderSceneVisual = async() => {
     const totalDuration = sceneParams.duration + sceneParams.swarmViewerDuration + sceneParams.insideSwarmDuration + sceneParams.fadeOutDuration;
 
     const totalFrames = frameRate*totalDuration;
-    const frames = [];
     const videoFrames = [];
     let currentFrame = 0;
     for (let i=0;i<totalFrames;i++) {
@@ -582,7 +582,7 @@ const renderSceneVisual = async() => {
     });
 
     const downloadURL = URL.createObjectURL(videoBlob);
-
+    console.log('Video download url: ');
     console.log(downloadURL);
 
     let downloadBtn = document.getElementById('itemDownload');
@@ -613,7 +613,7 @@ function pad(n, width, z) {
  
 
 
-// const renderVideoObj = { Render:function(){ renderSceneVisual(); }};
-// gui.add(renderVideoObj,'Render').name('Render video');
+const renderVideoObj = { Render:function(){ renderSceneVisual(); }};
+gui.add(renderVideoObj,'Render').name('Render video');
 
 
