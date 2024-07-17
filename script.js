@@ -12,8 +12,7 @@ scene.camera.updateProjectionMatrix();
 scene.renderer.setClearColor(0x000,1);
 
 const animate = async(args) => {
-  const elapsedTime = args.elapsedTime;
-  const deltaTime = args.deltaTime;
+
 
   if (sceneReady) {
       const sceneElapsedTime = audioCtx.currentTime - sceneState.startTime;
@@ -225,7 +224,6 @@ const startOscs = (oscs, audioCtx, startTime=0) => {
           const adjustedFreq = o.state.currentFreq*dopplerFactor*(1-stepPct*0) + 500*Math.pow(stepPct,3);
           o.osc.frequency.setValueAtTime(clampFrequency(adjustedFreq),stepTime + sceneParams.duration + sceneState.startTime);
 
-          //o.state.lastPosition = {x: newPosX, y: newPosY, z: newPosZ};
           o.state.lastDistance = distance;
 
           const thisPanner = o.panner;
@@ -357,7 +355,7 @@ const updateBugMeshs = (elapsedTime) => {
           o.mesh.rotation.set(thisRotation.x, thisRotation.y, thisRotation.z);
       }
 
-      const meshestoAnimate = o.mesh.children.length-5;
+      const meshestoAnimate = o.mesh.children.length-5; // exludes the eyes, antenna, and "head" from the wavy effect
       for (let i=0;i<o.mesh.children.length-5;i++) {
           o.mesh.children[i+1].position.y = Math.sin(elapsedTime*Math.PI*2*8)*.05 + .27*(.5+meshestoAnimate/6)*Math.sin(elapsedTime*Math.PI*2*1.5 + Math.pow((i/meshestoAnimate),1)*Math.PI);
       }
@@ -511,9 +509,6 @@ const renderSceneAudio = () => {
       const downloadURL = URL.createObjectURL(mp3Blob);
       console.log('Audio download url: ');
       console.log(downloadURL);
-      // let downloadBtn = document.getElementById('itemDownload');
-      // downloadBtn.style.zIndex = 1;
-      // downloadBtn.href = downloadURL;
       resolve({mp3Blob: mp3Blob, audioBuffer: audioBuffer, downloadURL: downloadURL, audioData: audioData});
     });
   })
@@ -556,7 +551,6 @@ const renderSceneVisual = async() => {
         currentFrame += 1;
 
         if (!renderSettings.skipFirstFrame || currentFrame>1) {
-                // @ts-ignore
             videoFrames.push({
                 name: `img${ pad( videoFrames.length, 3 ) }.jpeg`,
                 data
